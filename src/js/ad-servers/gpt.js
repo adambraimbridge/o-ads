@@ -2,14 +2,21 @@
 /* eslint no-inner-declarations: 1 */
 
 /**
-* @fileOverview
-* ad server modules for o-ads implementing Google publisher tags ad requests.
-*
-* @author Robin Marr, robin.marr@ft.com
-*/
+ * @fileOverview
+ * ad server modules for o-ads implementing Google publisher tags ad requests.
+ *
+ * @author Robin Marr, robin.marr@ft.com
+ */
 import config from '../config';
 import utils from '../utils';
 import targeting from '../targeting';
+import { stripUrlParams, SEARCH_PARAMS } from '../utils/url';
+
+export const DEFAULT_LAZY_LOAD = {
+	fetchMarginPercent: 500,
+	renderMarginPercent: 200,
+	mobileScaling: 2.0
+};
 const DEFAULT_COLLAPSE_MODE = 'never';
 let breakpoints = false;
 /*
@@ -19,8 +26,8 @@ let breakpoints = false;
 */
 
 /*
-* Initialise Google publisher tags functionality
-*/
+ * Initialise Google publisher tags functionality
+ */
 function init() {
 	const gptConfig = config('gpt') || {};
 	breakpoints = config('responsive');
@@ -33,8 +40,8 @@ function init() {
 }
 
 /*
-* initalise the googletag global namespace and add the google publish tags library to the page
-*/
+ * initalise the googletag global namespace and add the google publish tags library to the page
+ */
 function loadGPT() {
 	if (!window.googletag) {
 		// set up a place holder for the gpt code downloaded from google
@@ -46,9 +53,15 @@ function loadGPT() {
 		window.googletag.cmd = [];
 	}
 
-	utils.attach('//securepubads.g.doubleclick.net/tag/js/gpt.js', true,
-		() => { utils.broadcast('serverScriptLoaded'); },
-		(err) => { utils.broadcast('adServerLoadError', err); }
+	utils.attach(
+		'//securepubads.g.doubleclick.net/tag/js/gpt.js',
+		true,
+		() => {
+			utils.broadcast('serverScriptLoaded');
+		},
+		err => {
+			utils.broadcast('adServerLoadError', err);
+		}
 	);
 }
 
@@ -59,10 +72,10 @@ function loadGPT() {
 */
 
 /*
-* Configure the GPT library for the current page
-* this method is pushed onto the googletag command queue and run
-* when the library is available
-*/
+ * Configure the GPT library for the current page
+ * this method is pushed onto the googletag command queue and run
+ * when the library is available
+ */
 function setup(gptConfig) {
 	const nonPersonalized = config('nonPersonalized') ? 1 : 0;
 	googletag.pubads().addEventListener('slotRenderEnded', onRenderEnded);
@@ -70,16 +83,57 @@ function setup(gptConfig) {
 	setRenderingMode(gptConfig);
 	setPageTargeting(targeting.get());
 	setPageCollapseEmpty();
+	enableLazyLoad(gptConfig.enableLazyLoad);
+
+	const url = stripUrlParams({
+		href: window.location.href,
+		filters: { root: SEARCH_PARAMS }
+	});
+
 	googletag.enableServices();
-	googletag.pubads().setTargeting('url', window.location.href);
+	googletag.pubads().setTargeting('url', url);
 	googletag.pubads().setRequestNonPersonalizedAds(nonPersonalized);
+
 	return true;
 }
 
+/**
+ * Enables GPT's Lazy Loading for serving ads only when it's necessary.
+ * 		The lazy load config ooptions are:
+ *
+ * 			- fetchMarginPercent,		minimum distance from the current viewport a slot
+ * 					must be before we fetch the ad as a percentage of viewport size.
+ * 					0 means "when the slot enters the viewport",
+ * 					100 means "when the ad is 1 viewport away"
+ *
+ * 			- renderMarginPercent,	minimum distance from the current viewport a slot
+ * 					must be before we render an ad.
+ * 					This allows for prefetching the ad, but waiting to render and
+ * 					download other subresources. The value works just like
+ * 					fetchMarginPercent as a percentage of viewport.
+ *
+ * 			- mobileScaling,				a multiplier applied to margins on mobile devices.
+ * 					This allows varying margins on mobile vs. desktop. For example,
+ * 					a mobileScaling of 2.0 will multiply all margins by 2 on mobile
+ * 					devices, increasing the minimum distance a slot can be before
+ * 					fetching and rendering.
+ *
+ * @param {object|boolean} lazyLoadConf The lazy load config object or a boolean.
+ * @returns {boolean} true if the object is of type Array, otherwise false
+ */
+function enableLazyLoad(lazyLoadConf) {
+	if (lazyLoadConf && (typeof lazyLoadConf === 'object' || typeof lazyLoadConf === 'boolean')) {
+		const opts = Object.assign({}, DEFAULT_LAZY_LOAD, typeof lazyLoadConf === 'object' ? lazyLoadConf : {});
+		window.googletag.pubads().enableLazyLoad(opts);
+	} else {
+		utils.log.warn('lazyLoadConf must be either an object or a boolean', lazyLoadConf);
+	}
+}
+
 /*
-* set the gpt rendering mode to either sync or async
-* default is async
-*/
+ * set the gpt rendering mode to either sync or async
+ * default is async
+ */
 
 function setRenderingMode(gptConfig) {
 	const rendering = gptConfig.rendering;
@@ -93,11 +147,11 @@ function setRenderingMode(gptConfig) {
 }
 
 /**
-* Adds page targeting to GPT ad calls
-* @name setPageTargeting
-* @memberof GPT
-* @lends GPT
-*/
+ * Adds page targeting to GPT ad calls
+ * @name setPageTargeting
+ * @memberof GPT
+ * @lends GPT
+ */
 function setPageTargeting(targetingData) {
 	if (utils.isPlainObject(targetingData)) {
 		googletag.cmd.push(() => {
@@ -116,8 +170,8 @@ function setPageTargeting(targetingData) {
 }
 
 /**
-* Removes page targeting for a specified key from GPT ad calls
-*/
+ * Removes page targeting for a specified key from GPT ad calls
+ */
 function clearPageTargetingForKey(key) {
 	if (!window.googletag) {
 		utils.log.warn('Attempting to clear page targeting before the GPT library has initialized');
@@ -133,11 +187,11 @@ function clearPageTargetingForKey(key) {
 }
 
 /**
-* Sets behaviour of empty slots can be 'after', 'before' or 'never'
-* * 'after' collapse slots that return an empty ad
-* * 'before' collapses all slots and only displays them when an ad is found
-* * 'never' does not collapse any empty slot, the collapseEmptyDivs method is not called in that case
-*/
+ * Sets behaviour of empty slots can be 'after', 'before' or 'never'
+ * * 'after' collapse slots that return an empty ad
+ * * 'before' collapses all slots and only displays them when an ad is found
+ * * 'never' does not collapse any empty slot, the collapseEmptyDivs method is not called in that case
+ */
 function setPageCollapseEmpty() {
 	const mode = config('collapseEmpty');
 
@@ -151,9 +205,9 @@ function setPageCollapseEmpty() {
 }
 
 /**
-* When companions are enabled we delay the rendering of ad slots until
-* either a master is returned or all slots are returned without a master
-*/
+ * When companions are enabled we delay the rendering of ad slots until
+ * either a master is returned or all slots are returned without a master
+ */
 function enableCompanions(gptConfig) {
 	if (gptConfig.companions) {
 		googletag.pubads().disableInitialLoad();
@@ -168,8 +222,8 @@ function enableCompanions(gptConfig) {
 */
 
 /*
-* Event handler for when a slot is ready for an ad to rendered
-*/
+ * Event handler for when a slot is ready for an ad to rendered
+ */
 function onReady(slotMethods, event) {
 	const slot = event.detail.slot;
 	/* istanbul ignore else  */
@@ -181,7 +235,8 @@ function onReady(slotMethods, event) {
 
 		// setup the gpt configuration the ad
 		googletag.cmd.push(() => {
-			slot.defineSlot()
+			slot
+				.defineSlot()
 				.addServices()
 				.setCollapseEmpty()
 				.setTargeting()
@@ -194,8 +249,8 @@ function onReady(slotMethods, event) {
 	}
 }
 /*
-* Render is called when a slot is not rendered when the ready event fires
-*/
+ * Render is called when a slot is not rendered when the ready event fires
+ */
 function onRender(event) {
 	const slot = event.detail.slot;
 	/* istanbul ignore else  */
@@ -205,8 +260,8 @@ function onRender(event) {
 }
 
 /*
-* refresh is called when a slot requests the ad be flipped
-*/
+ * refresh is called when a slot requests the ad be flipped
+ */
 function onRefresh(event) {
 	window.googletag.cmd.push(() => {
 		const targeting = event.detail.targeting;
@@ -228,8 +283,8 @@ function onResize(event) {
 }
 
 /*
-* function passed to the gpt library that is run when an ad completes rendering
-*/
+ * function passed to the gpt library that is run when an ad completes rendering
+ */
 function onRenderEnded(event) {
 	const data = {
 		gpt: {}
@@ -277,8 +332,8 @@ function onRenderEnded(event) {
 */
 const slotMethods = {
 	/**
-	* define a GPT slot
-	*/
+	 * define a GPT slot
+	 */
 	defineSlot: function() {
 		window.googletag.cmd.push(() => {
 			this.gpt.id = `${this.name}-gpt`;
@@ -291,8 +346,7 @@ const slotMethods = {
 				} else {
 					this.gpt.slot = googletag.defineSlot(this.gpt.unitName, this.sizes, this.gpt.id);
 				}
-			}
-			else {
+			} else {
 				this.gpt.slot = googletag.defineOutOfPageSlot(this.gpt.unitName, this.gpt.id);
 			}
 		});
@@ -308,21 +362,25 @@ const slotMethods = {
 	},
 	initResponsive: function() {
 		window.googletag.cmd.push(() => {
-			utils.on('breakpoint', (event) => {
-				const slot = event.detail.slot;
-				const screensize = event.detail.screensize;
+			utils.on(
+				'breakpoint',
+				event => {
+					const slot = event.detail.slot;
+					const screensize = event.detail.screensize;
 
-				updatePageTargeting({ res: screensize });
+					updatePageTargeting({ res: screensize });
 
-				if (slot.hasValidSize(screensize)) {
-					/* istanbul ignore else  */
-					if (slot.gpt.iframe) {
-						slot.fire('refresh');
-					} else if (!this.defer) {
-						slot.display();
+					if (slot.hasValidSize(screensize)) {
+						/* istanbul ignore else  */
+						if (slot.gpt.iframe) {
+							slot.fire('refresh');
+						} else if (!this.defer) {
+							slot.display();
+						}
 					}
-				}
-			}, this.container);
+				},
+				this.container
+			);
 
 			const mapping = googletag.sizeMapping();
 			Object.keys(breakpoints).forEach(breakpoint => {
@@ -337,8 +395,8 @@ const slotMethods = {
 	},
 
 	/**
-	* Tell gpt to destroy the slot and its metadata
-	*/
+	 * Tell gpt to destroy the slot and its metadata
+	 */
 	destroySlot: function(gptSlot) {
 		if (window.googletag.pubadsReady && window.googletag.pubads) {
 			gptSlot = gptSlot || this.gpt.slot;
@@ -348,8 +406,8 @@ const slotMethods = {
 		}
 	},
 	/*
-	*	Tell gpt to request an ad
-	*/
+	 *	Tell gpt to request an ad
+	 */
 	display: function() {
 		window.googletag.cmd.push(() => {
 			this.fire('slotGoRender');
@@ -358,8 +416,8 @@ const slotMethods = {
 		return this;
 	},
 	/**
-	* Set the DFP unit name for the slot.
-	*/
+	 * Set the DFP unit name for the slot.
+	 */
 	setUnitName: function() {
 		window.googletag.cmd.push(() => {
 			let unitName;
@@ -383,8 +441,8 @@ const slotMethods = {
 		return this;
 	},
 	/**
-	* Add the slot to the pub ads service and add a companion service if configured
-	*/
+	 * Add the slot to the pub ads service and add a companion service if configured
+	 */
 	addServices: function(gptSlot) {
 		window.googletag.cmd.push(() => {
 			const gpt = config('gpt') || {};
@@ -398,9 +456,9 @@ const slotMethods = {
 	},
 
 	/**
-	* Sets the GPT collapse empty mode for a given slot
-	* values can be 'after', 'before', 'never'
-	*/
+	 * Sets the GPT collapse empty mode for a given slot
+	 * values can be 'after', 'before', 'never'
+	 */
 	setCollapseEmpty: function() {
 		window.googletag.cmd.push(() => {
 			const mode = this.collapseEmpty || config('collapseEmpty') || DEFAULT_COLLAPSE_MODE;
@@ -416,7 +474,7 @@ const slotMethods = {
 
 		return this;
 	},
-	submitGptImpression : function() {
+	submitGptImpression: function() {
 		/* istanbul ignore next  */
 		function getImpressionURL(iframe) {
 			const trackingUrlElement = iframe.contentWindow.document.querySelector('[data-o-ads-impression-url]');
@@ -428,11 +486,12 @@ const slotMethods = {
 			}
 		}
 		if (this.outOfPage && this.gpt.iframe) {
-
 			const impressionURL = getImpressionURL(this.gpt.iframe);
 			/* istanbul ignore next  */
-			if(impressionURL){
-				utils.attach(impressionURL, true,
+			if (impressionURL) {
+				utils.attach(
+					impressionURL,
+					true,
 					() => {
 						utils.log.info('Impression Url requested');
 					},
@@ -442,15 +501,14 @@ const slotMethods = {
 					true
 				);
 			}
-		}
-		else {
+		} else {
 			utils.log.warn('Attempting to call submitImpression on a non-oop slot');
 		}
 	},
 	/**
-	* Sets page url to be sent to google
-	* prevents later url changes via javascript from breaking the ads
-	*/
+	 * Sets page url to be sent to google
+	 * prevents later url changes via javascript from breaking the ads
+	 */
 	setURL: function(gptSlot) {
 		window.googletag.cmd.push(() => {
 			gptSlot = gptSlot || this.gpt.slot;
@@ -461,8 +519,8 @@ const slotMethods = {
 	},
 
 	/**
-	* Adds key values from a given object to the slot targeting
-	*/
+	 * Adds key values from a given object to the slot targeting
+	 */
 	setTargeting: function(gptSlot) {
 		window.googletag.cmd.push(() => {
 			gptSlot = gptSlot || this.gpt.slot;
@@ -474,7 +532,7 @@ const slotMethods = {
 			}
 		});
 		return this;
-	},
+	}
 };
 
 /*
@@ -484,34 +542,41 @@ const slotMethods = {
 */
 
 /**
-* The correlator is a random number added to ad calls.
-* It is used by the ad server to determine which impressions where served to the same page
-* Updating is used to tell the ad server to treat subsequent ad calls as being on a new page
-*/
+ * The correlator is a random number added to ad calls.
+ * It is used by the ad server to determine which impressions where served to the same page
+ * Updating is used to tell the ad server to treat subsequent ad calls as being on a new page
+ */
 function updateCorrelator() {
-	utils.log.warn('[DEPRECATED]: Updatecorrelator is being phased out by google and removed from o-ads in future releases.');
+	utils.log.warn(
+		'[DEPRECATED]: Updatecorrelator is being phased out by google and removed from o-ads in future releases.'
+	);
 
 	googletag.cmd.push(() => {
 		googletag.pubads().updateCorrelator();
 	});
 }
 
+function clearPageTargeting() {
+	if (window.googletag) {
+		googletag.cmd.push(() => {
+			googletag.pubads().clearTargeting();
+		});
+	}
+	else {
+		utils.log.warn('Attempting to clear page targeting before the GPT library has initialized');
+	}
+}
+
 function updatePageTargeting(override) {
 	if (window.googletag) {
 		const params = utils.isPlainObject(override) ? override : targeting.get();
-		if (!override) {
-			googletag.cmd.push(() => {
-				googletag.pubads().clearTargeting();
-			});
-		}
 		setPageTargeting(params);
-	}
-	else {
+	} else {
 		utils.log.warn('Attempting to set page targeting before the GPT library has initialized');
 	}
 }
 //https://developers.google.com/doubleclick-gpt/common_implementation_mistakes#scenario-2:-checking-the-googletag-object-to-know-whether-gpt-is-ready
-function hasGPTLoaded () {
+function hasGPTLoaded() {
 	if (window.googletag && window.googletag.apiReady) {
 		return true;
 	} else {
@@ -522,7 +587,7 @@ function hasGPTLoaded () {
 function debug() {
 	const log = utils.log;
 	const conf = config('gpt');
-	if(!conf){
+	if (!conf) {
 		return;
 	}
 
@@ -530,10 +595,13 @@ function debug() {
 	log.attributeTable(conf);
 	log.end();
 }
+
 export default {
 	init,
+	setup,
 	updateCorrelator,
 	updatePageTargeting,
+	clearPageTargeting,
 	clearPageTargetingForKey,
 	hasGPTLoaded,
 	loadGPT,
